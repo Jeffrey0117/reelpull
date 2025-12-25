@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
+from pathlib import Path
+import os
 
 from models import Download, Setting, get_db
 from schemas import UrlInput, DownloadResponse, SettingUpdate, SettingsResponse
@@ -116,3 +119,115 @@ def update_settings(update: SettingUpdate, db: Session = Depends(get_db)):
 
     db.commit()
     return get_settings(db)
+
+
+# ========== Videos Management Endpoints ==========
+
+def get_download_path(db: Session) -> Path:
+    """取得下載路徑"""
+    setting = db.query(Setting).filter(Setting.key == "download_path").first()
+    download_path = setting.value if setting else "../downloads"
+    return Path(download_path)
+
+
+@router.get("/videos")
+def list_videos(db: Session = Depends(get_db)):
+    """列出所有下載的影片"""
+    download_path = get_download_path(db)
+
+    if not download_path.exists():
+        return []
+
+    videos = []
+    video_extensions = {'.mp4', '.webm', '.mov', '.avi', '.mkv'}
+
+    for file in download_path.iterdir():
+        if file.is_file() and file.suffix.lower() in video_extensions:
+            stat = file.stat()
+            videos.append({
+                "filename": file.name,
+                "size": stat.st_size,
+                "created_at": stat.st_ctime,
+                "modified_at": stat.st_mtime
+            })
+
+    # 按修改時間排序，最新的在前
+    videos.sort(key=lambda x: x["modified_at"], reverse=True)
+    return videos
+
+
+@router.get("/videos/{filename}")
+def get_video(filename: str, db: Session = Depends(get_db)):
+    """串流影片檔案"""
+    download_path = get_download_path(db)
+    file_path = download_path / filename
+
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # 安全檢查：確保檔案在下載目錄內
+    try:
+        file_path.resolve().relative_to(download_path.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    return FileResponse(
+        path=file_path,
+        media_type="video/mp4",
+        filename=filename
+    )
+
+
+@router.put("/videos/{filename}/rename")
+def rename_video(filename: str, new_name: str, db: Session = Depends(get_db)):
+    """重命名影片檔案"""
+    download_path = get_download_path(db)
+    old_path = download_path / filename
+
+    if not old_path.exists():
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # 確保新名稱有副檔名
+    new_name = new_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="New name cannot be empty")
+
+    # 保留原始副檔名
+    old_ext = old_path.suffix
+    if not new_name.lower().endswith(old_ext.lower()):
+        new_name = new_name + old_ext
+
+    new_path = download_path / new_name
+
+    # 檢查新檔名是否已存在
+    if new_path.exists() and new_path != old_path:
+        raise HTTPException(status_code=400, detail="A file with this name already exists")
+
+    # 安全檢查
+    try:
+        new_path.resolve().relative_to(download_path.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Invalid filename")
+
+    os.rename(old_path, new_path)
+
+    return {"message": "Renamed successfully", "new_filename": new_name}
+
+
+@router.delete("/videos/{filename}")
+def delete_video(filename: str, db: Session = Depends(get_db)):
+    """刪除影片檔案"""
+    download_path = get_download_path(db)
+    file_path = download_path / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # 安全檢查
+    try:
+        file_path.resolve().relative_to(download_path.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    os.remove(file_path)
+    return {"message": "Deleted successfully"}

@@ -6,7 +6,10 @@ import { api } from './api/index.js'
 const urlInput = ref('')
 const queue = ref([])
 const history = ref([])
+const videos = ref([])
 const activeTab = ref('queue')
+const editingVideo = ref(null)
+const editingName = ref('')
 const serviceStatus = ref({
   status: 'idle',
   is_running: false,
@@ -257,19 +260,85 @@ async function updateSetting(key, value) {
   }
 }
 
+// Videos Management
+async function loadVideos() {
+  try {
+    videos.value = await api.getVideos()
+  } catch (e) {
+    showToast('載入影片失敗', 'error')
+  }
+}
+
+function startEdit(video) {
+  editingVideo.value = video.filename
+  // 移除副檔名方便編輯
+  const name = video.filename
+  const lastDot = name.lastIndexOf('.')
+  editingName.value = lastDot > 0 ? name.substring(0, lastDot) : name
+}
+
+function cancelEdit() {
+  editingVideo.value = null
+  editingName.value = ''
+}
+
+async function saveRename(oldFilename) {
+  if (!editingName.value.trim()) {
+    showToast('名稱不能為空', 'warning')
+    return
+  }
+
+  try {
+    const result = await api.renameVideo(oldFilename, editingName.value.trim())
+    showToast('重命名成功', 'success')
+    // 更新列表中的檔名
+    const video = videos.value.find(v => v.filename === oldFilename)
+    if (video) {
+      video.filename = result.new_filename
+    }
+    cancelEdit()
+  } catch (e) {
+    showToast('重命名失敗：' + e.message, 'error')
+  }
+}
+
+async function deleteVideo(filename) {
+  openModal(
+    '確認刪除',
+    `確定要刪除影片「${filename}」嗎？此操作無法復原。`,
+    async () => {
+      try {
+        await api.deleteVideo(filename)
+        videos.value = videos.value.filter(v => v.filename !== filename)
+        showToast('影片已刪除', 'success')
+      } catch (e) {
+        showToast('刪除失敗：' + e.message, 'error')
+      }
+    }
+  )
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
 // Load initial data
 async function loadData() {
   try {
-    const [queueData, historyData, settingsData, statusData] = await Promise.all([
+    const [queueData, historyData, settingsData, statusData, videosData] = await Promise.all([
       api.getQueue(),
       api.getHistory(),
       api.getSettings(),
-      api.getDownloadStatus()
+      api.getDownloadStatus(),
+      api.getVideos()
     ])
     queue.value = queueData
     history.value = historyData
     settings.value = settingsData
     serviceStatus.value = statusData
+    videos.value = videosData
   } catch (e) {
     showToast('載入資料失敗', 'error')
   }

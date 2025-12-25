@@ -66,5 +66,37 @@ export const api = {
   async getDownloadStatus() {
     const res = await fetch(`${API_BASE}/download/status`)
     return res.json()
+  },
+
+  // Videos Management
+  async getVideos() {
+    const res = await fetch(`${API_BASE}/videos`)
+    return res.json()
+  },
+
+  getVideoUrl(filename) {
+    return `${API_BASE}/videos/${encodeURIComponent(filename)}`
+  },
+
+  async renameVideo(filename, newName) {
+    const res = await fetch(`${API_BASE}/videos/${encodeURIComponent(filename)}/rename?new_name=${encodeURIComponent(newName)}`, {
+      method: 'PUT'
+    })
+    if (!res.ok) {
+      const error = await res.json()
+      throw new Error(error.detail || 'Rename failed')
+    }
+    return res.json()
+  },
+
+  async deleteVideo(filename) {
+    const res = await fetch(`${API_BASE}/videos/${encodeURIComponent(filename)}`, {
+      method: 'DELETE'
+    })
+    if (!res.ok) {
+      const error = await res.json()
+      throw new Error(error.detail || 'Delete failed')
+    }
+    return res.json()
   }
 }
